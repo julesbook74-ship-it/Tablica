@@ -1,12 +1,7 @@
-<!DOCTYPE html>
-<html lang="pl">
+<!DOCTYPE html><html lang="pl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-
-<title>Tablica – wspólny zeszyt</title>
-
-<style>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Tablica – wspólny zeszyt</title><style>
 :root {
   --ink:#202332;
   --muted:#697087;
@@ -99,11 +94,15 @@ main {
 }
 
 .sheet-wrap {
-  overflow:auto;
+  overflow-y:auto;
+  overflow-x:hidden;
   display:flex;
   justify-content:center;
+  align-items:flex-start;
   padding:5px 0 25px;
   overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  max-height:75vh;
 }
 
 .sheet {
@@ -112,7 +111,6 @@ main {
   height:min(1160px,125vw);
   min-height:520px;
   flex-shrink:0;
-
   background-color:white;
 
   background-image:
@@ -123,8 +121,6 @@ main {
 
   box-shadow:0 5px 25px #20233220;
   border:1px solid #d9deea;
-
-  touch-action:pan-y;
 }
 
 canvas {
@@ -136,7 +132,7 @@ canvas {
 
 #drawCanvas {
   z-index:2;
-  touch-action:pan-y;
+  touch-action:none;
 }
 
 #emptyHint {
@@ -184,90 +180,43 @@ input[type=file] {
     min-height:500px;
   }
 }
-</style>
-</head>
-
-<body>
-
-<header>
-
-<div class="brand">
-  Ta<span>blica</span> – wspólny zeszyt
-</div>
-
-<div class="tools">
-
-<button id="pen" class="active">✒️ Długopis</button>
-
+</style></head><body><header><div class="brand">
+Ta<span>blica</span> – wspólny zeszyt
+</div><div class="tools"><button id="pen" class="active">✒️ Długopis</button>
 <button id="highlighter">🖍️ Zakreślacz</button>
-
 <button id="eraser">🧽 Gumka</button>
 
-<input id="color" type="color" value="#202332">
-
-<label>
+<input id="color" type="color" value="#202332"><label>
 Grubość
 <input id="size" type="range" min="1" max="18" value="3">
-</label>
-
-<button id="undo">↶ Cofnij</button>
-
+</label><button id="undo">↶ Cofnij</button>
 <button id="redo">↷ Ponów</button>
 
 </div>
-</header>
-
-<main>
-
-<div class="info">
-Rysik służy do pisania. Palcem możesz przewijać stronę.
-Twoje notatki zapisują się automatycznie w tej przeglądarce.
-</div>
-
-<div class="pagebar">
-
-<button id="prev">← Poprzednia</button>
-
+</header><main><div class="info">
+Rysik służy do pisania pod dowolnym kątem.
+Palcem możesz przesuwać kartkę.
+Notatki zapisują się automatycznie.
+</div><div class="pagebar"><button id="prev">← Poprzednia</button>
 <b id="pageLabel">Strona 1</b>
-
 <button id="next">Następna →</button>
-
 <button id="addPage">＋ Nowa strona</button>
 
-</div>
-
-<div class="sheet-wrap">
-
-<div class="sheet" id="sheet">
-
-<div id="emptyHint">
+</div><div class="sheet-wrap" id="sheetWrap"><div class="sheet" id="sheet"><div id="emptyHint">
 Zacznij pisać rysikiem...
-</div>
+</div><canvas id="drawCanvas"></canvas>
 
-<canvas id="drawCanvas"></canvas>
-
-</div>
-
-</div>
-
-</main>
-
-<footer>
-
-<button id="clear">🗑️ Wyczyść stronę</button>
-
+</div></div></main><footer><button id="clear">🗑️ Wyczyść stronę</button>
 <button id="download">⬇ Pobierz stronę PNG</button>
 
-</footer>
-
-<script>
+</footer><script>
 
 (() => {
 
 const draw = document.getElementById("drawCanvas");
 const ctx = draw.getContext("2d");
-
 const sheet = document.getElementById("sheet");
+const wrap = document.getElementById("sheetWrap");
 
 const KEY = "tablica-notebook-v2";
 
@@ -275,18 +224,20 @@ const $ = id => document.getElementById(id);
 
 let pages = [];
 let page = 0;
-
 let tool = "pen";
+
 let drawing = false;
 let current = null;
+let activePenId = null;
 
-let undoStack = [];
+let fingerScrolling = false;
+let fingerId = null;
+let fingerLastY = 0;
+
 let redoStack = [];
 
 function blank() {
-  return {
-    strokes:[]
-  };
+  return { strokes:[] };
 }
 
 // Odczyt zapisanych stron
@@ -330,15 +281,13 @@ function save() {
 
   } catch(e) {
 
-    alert(
-      "Brak miejsca na zapis. Pobierz ważne strony jako PNG."
-    );
+    alert("Brak miejsca na zapis. Pobierz ważne strony jako PNG.");
 
   }
 
 }
 
-// Dopasowanie płótna do kartki
+// Dopasowanie płótna
 
 function fit() {
 
@@ -352,15 +301,13 @@ function fit() {
   draw.width = Math.round(r.width * dpr);
   draw.height = Math.round(r.height * dpr);
 
-  ctx.setTransform(
-    dpr,0,0,dpr,0,0
-  );
+  ctx.setTransform(dpr,0,0,dpr,0,0);
 
   redraw();
 
 }
 
-// Rysowanie zapisanych śladów
+// Rysowanie śladów
 
 function paintStroke(c,s) {
 
@@ -379,77 +326,53 @@ function paintStroke(c,s) {
       : s.size;
 
   c.globalAlpha =
-    s.tool === "highlighter"
-      ? 0.25
-      : 1;
+    s.tool === "highlighter" ? 0.25 : 1;
 
   if(s.tool === "eraser") {
-
-    c.globalCompositeOperation =
-      "destination-out";
-
+    c.globalCompositeOperation = "destination-out";
     c.globalAlpha = 1;
-
   }
 
   c.beginPath();
 
-  c.moveTo(
-    s.points[0].x,
-    s.points[0].y
-  );
+  c.moveTo(s.points[0].x,s.points[0].y);
 
   for(let i=1;i<s.points.length;i++) {
-
-    c.lineTo(
-      s.points[i].x,
-      s.points[i].y
-    );
-
+    c.lineTo(s.points[i].x,s.points[i].y);
   }
 
   if(s.points.length === 1) {
-
     c.lineTo(
       s.points[0].x + 0.1,
       s.points[0].y + 0.1
     );
-
   }
 
   c.stroke();
-
   c.restore();
 
 }
 
-// Odświeżanie strony
+// Odświeżanie
 
 function redraw() {
 
   const r = sheet.getBoundingClientRect();
 
-  ctx.clearRect(
-    0,0,r.width,r.height
-  );
+  ctx.clearRect(0,0,r.width,r.height);
 
-  const p = pages[page];
-
-  p.strokes.forEach(s => {
+  pages[page].strokes.forEach(s => {
     paintStroke(ctx,s);
   });
 
-  $("pageLabel").textContent =
-    "Strona " + (page + 1);
+  $("pageLabel").textContent = "Strona " + (page+1);
 
   $("emptyHint").style.display =
-    p.strokes.length === 0
-      ? "block"
-      : "none";
+    pages[page].strokes.length === 0 ? "block" : "none";
 
 }
 
-// Pozycja rysika
+// Pozycja
 
 function pos(e) {
 
@@ -462,20 +385,73 @@ function pos(e) {
 
 }
 
-// Rozpoczęcie pisania
+// Dodawanie punktów rysika
 
-draw.addEventListener("pointerdown", e => {
+function addPoints(e) {
 
-  // Palec nie rysuje.
-  // Pisze rysik lub myszka.
+  let events = [e];
+
+  if(typeof e.getCoalescedEvents === "function") {
+
+    const extra = e.getCoalescedEvents();
+
+    if(extra.length) events = extra;
+
+  }
+
+  events.forEach(ev => {
+
+    const p = pos(ev);
+
+    current.points.push(p);
+
+    paintStroke(ctx,{
+      tool:current.tool,
+      color:current.color,
+      size:current.size,
+      points:[
+        current.points[current.points.length-2] || p,
+        p
+      ]
+    });
+
+  });
+
+}
+
+// Rozpoczęcie rysowania
+
+draw.addEventListener("pointerdown",e => {
 
   if(e.pointerType === "touch") {
+
+    if(drawing) return;
+
+    fingerScrolling = true;
+    fingerId = e.pointerId;
+    fingerLastY = e.clientY;
+
+    try {
+      draw.setPointerCapture(e.pointerId);
+    } catch(err) {}
+
+    e.preventDefault();
     return;
   }
 
+  if(e.pointerType !== "pen" && e.pointerType !== "mouse") {
+    return;
+  }
+
+  if(drawing) return;
+
   e.preventDefault();
 
-  draw.setPointerCapture(e.pointerId);
+  activePenId = e.pointerId;
+
+  try {
+    draw.setPointerCapture(e.pointerId);
+  } catch(err) {}
 
   drawing = true;
 
@@ -494,27 +470,46 @@ draw.addEventListener("pointerdown", e => {
 
   };
 
-});
-
-// Ruch rysika
-
-draw.addEventListener("pointermove", e => {
-
-  if(!drawing || !current) return;
-
-  e.preventDefault();
-
-  const p = pos(e);
-
-  current.points.push(p);
-
   paintStroke(ctx,current);
 
 });
 
-// Zakończenie pisania
+// Ruch
 
-function endDrawing() {
+draw.addEventListener("pointermove",e => {
+
+  // Przewijanie palcem
+
+  if(fingerScrolling && e.pointerId === fingerId) {
+
+    e.preventDefault();
+
+    const delta = fingerLastY - e.clientY;
+
+    wrap.scrollTop += delta;
+
+    fingerLastY = e.clientY;
+
+    return;
+  }
+
+  // Pisanie rysikiem
+
+  if(!drawing || !current || e.pointerId !== activePenId) {
+    return;
+  }
+
+  e.preventDefault();
+
+  addPoints(e);
+
+});
+
+// Koniec pisania
+
+function endDrawing(e) {
+
+  if(e && e.pointerId !== activePenId) return;
 
   if(!drawing || !current) return;
 
@@ -522,14 +517,10 @@ function endDrawing() {
 
   pages[page].strokes.push(current);
 
-  undoStack.push({
-    page:page,
-    stroke:current
-  });
+  current = null;
+  activePenId = null;
 
   redoStack = [];
-
-  current = null;
 
   save();
 
@@ -537,22 +528,35 @@ function endDrawing() {
 
 }
 
-draw.addEventListener(
-  "pointerup",
-  endDrawing
-);
+draw.addEventListener("pointerup",e => {
 
-draw.addEventListener(
-  "pointercancel",
-  endDrawing
-);
+  if(fingerScrolling && e.pointerId === fingerId) {
 
-draw.addEventListener(
-  "lostpointercapture",
-  endDrawing
-);
+    fingerScrolling = false;
+    fingerId = null;
+    return;
 
-// Wybór narzędzia
+  }
+
+  endDrawing(e);
+
+});
+
+draw.addEventListener("pointercancel",e => {
+
+  if(fingerScrolling && e.pointerId === fingerId) {
+
+    fingerScrolling = false;
+    fingerId = null;
+    return;
+
+  }
+
+  endDrawing(e);
+
+});
+
+// Narzędzia
 
 function choose(t) {
 
@@ -560,19 +564,14 @@ function choose(t) {
 
   ["pen","highlighter","eraser"].forEach(id => {
 
-    $(id).classList.toggle(
-      "active",
-      id === t
-    );
+    $(id).classList.toggle("active",id === t);
 
   });
 
 }
 
 $("pen").onclick = () => choose("pen");
-
 $("highlighter").onclick = () => choose("highlighter");
-
 $("eraser").onclick = () => choose("eraser");
 
 // Cofanie
@@ -588,13 +587,7 @@ $("undo").onclick = () => {
       stroke:s
     });
 
-    undoStack.push({
-      page:page,
-      undone:true
-    });
-
     save();
-
     redraw();
 
   }
@@ -612,14 +605,13 @@ $("redo").onclick = () => {
     pages[page].strokes.push(x.stroke);
 
     save();
-
     redraw();
 
   }
 
 };
 
-// Czyszczenie strony
+// Czyszczenie
 
 $("clear").onclick = () => {
 
@@ -627,11 +619,9 @@ $("clear").onclick = () => {
 
     pages[page] = blank();
 
-    undoStack = [];
     redoStack = [];
 
     save();
-
     redraw();
 
   }
@@ -642,40 +632,31 @@ $("clear").onclick = () => {
 
 function go(n) {
 
-  page = Math.max(
-    0,
-    Math.min(pages.length-1,n)
-  );
+  page = Math.max(0,Math.min(pages.length-1,n));
 
   save();
-
   redraw();
+
+  wrap.scrollTop = 0;
 
 }
 
 $("prev").onclick = () => go(page-1);
-
 $("next").onclick = () => go(page+1);
 
 // Nowa strona
 
 $("addPage").onclick = () => {
 
-  pages.splice(
-    page+1,
-    0,
-    blank()
-  );
+  pages.splice(page+1,0,blank());
 
   go(page+1);
 
 };
 
-// Pobieranie strony
+// Pobieranie PNG
 
 $("download").onclick = () => {
-
-  const r = sheet.getBoundingClientRect();
 
   const output = document.createElement("canvas");
 
@@ -685,15 +666,9 @@ $("download").onclick = () => {
   const octx = output.getContext("2d");
 
   octx.fillStyle = "white";
+  octx.fillRect(0,0,output.width,output.height);
 
-  octx.fillRect(
-    0,0,output.width,output.height
-  );
-
-  const dpr = Math.max(
-    1,
-    window.devicePixelRatio || 1
-  );
+  const dpr = Math.max(1,window.devicePixelRatio || 1);
 
   const step = 24*dpr;
 
@@ -722,27 +697,19 @@ $("download").onclick = () => {
 
   const a = document.createElement("a");
 
-  a.download =
-    "tablica-strona-" + (page+1) + ".png";
-
+  a.download = "tablica-strona-"+(page+1)+".png";
   a.href = output.toDataURL("image/png");
-
   a.click();
 
 };
 
 // Zmiana rozmiaru
 
-window.addEventListener(
-  "resize",
-  fit
-);
+window.addEventListener("resize",fit);
 
 fit();
 
 })();
 
-</script>
-
-</body>
+</script></body>
 </html>
